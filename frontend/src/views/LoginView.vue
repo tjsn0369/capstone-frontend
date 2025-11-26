@@ -2,7 +2,7 @@
   <div class="center-container">
     <div class="glow-bg"></div>
     <div class="login-card">
-      <h1 class="title">CV-DLOps</h1>
+      <h1 class="title">CVal-DLOps</h1>
       <p class="subtitle">AI Project Management System</p>
       
       <div class="form-group">
