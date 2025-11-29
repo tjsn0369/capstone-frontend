@@ -4,14 +4,15 @@
       <div class="project-name">Analysis Result</div>
       <div class="tabs">
         <button :class="['tab-btn', { active: tab === 'analysis' }]" @click="tab = 'analysis'">📊 Analysis</button>
-        <button :class="['tab-btn', { active: tab === 'cluster' }]" @click="tab = 'cluster'">🎯 2D Cluster</button>
+        <button :class="['tab-btn', { active: tab === 'cluster' }]" @click="tab = 'cluster'">🎯 Cluster (t-SNE)</button>
+        <button :class="['tab-btn', 'highlight-btn', { active: tab === 'inference' }]" @click="tab = 'inference'">🧪 Test Model</button>
       </div>
       <button class="btn-close" @click="$router.push('/projects')">Exit</button>
     </nav>
 
     <main class="content-area">
+      
       <div v-if="tab === 'analysis'" class="view-container split-view">
-        
         <div class="card left-panel">
           <h3>📈 Final Score</h3>
           <div class="score-box">
@@ -24,7 +25,6 @@
               <span class="value red">{{ result.final_loss }}</span>
             </div>
           </div>
-
           <h3 class="mt-20">⚙️ Best Parameters</h3>
           <div class="param-table">
             <div class="table-row"><span class="p-name">Learning Rate</span><span class="p-value">{{ result.best_params?.learning_rate }}</span></div>
@@ -51,30 +51,63 @@
 
       <div v-if="tab === 'cluster'" class="view-container">
         <div class="card full-height">
-          <div class="cluster-header">
-            <h3>Feature Space (t-SNE)</h3>
-            <div class="toggle-group">
-              <button class="toggle-btn red" :class="{ inactive: !showA }" @click="showA = !showA"><span class="dot-icon"></span> Class A</button>
-              <button class="toggle-btn blue" :class="{ inactive: !showB }" @click="showB = !showB"><span class="dot-icon"></span> Class B</button>
-              <button class="toggle-btn green" :class="{ inactive: !showC }" @click="showC = !showC"><span class="dot-icon"></span> Class C</button>
+          <div id="cluster-chart-div" style="width: 100%; height: 100%;"></div>
+        </div>
+      </div>
+
+      <div v-if="tab === 'inference'" class="view-container">
+        <div class="card full-height inference-layout">
+          <div class="upload-section">
+            <h3 class="section-head">Step 1. Upload Image</h3>
+            <div 
+              class="drop-zone" 
+              :class="{ 'has-image': previewUrl }"
+              @dragover.prevent 
+              @drop.prevent="handleDrop"
+              @click="$refs.fileInput.click()"
+            >
+              <input type="file" ref="fileInput" @change="handleFileSelect" hidden accept="image/*" />
+              <div v-if="!previewUrl" class="placeholder-content">
+                <span class="upload-icon">📷</span>
+                <p>Drag & Drop or Click</p>
+              </div>
+              <img v-else :src="previewUrl" class="preview-img" />
             </div>
+            <button v-if="previewUrl" class="btn-run" @click="runInference" :disabled="isLoading">
+              {{ isLoading ? 'Processing...' : 'Run Inference ⚡' }}
+            </button>
           </div>
-          <div class="scatter-box">
-            <div class="grid-line horizontal"></div><div class="grid-line vertical"></div>
-            <transition name="fade"><div v-show="showA"><div class="point red" style="top:30%; left:25%"></div><div class="point red" style="top:35%; left:28%"></div></div></transition>
-            <transition name="fade"><div v-show="showB"><div class="point blue" style="top:70%; left:75%"></div><div class="point blue" style="top:65%; left:80%"></div></div></transition>
-            <transition name="fade"><div v-show="showC"><div class="point green" style="top:20%; left:80%"></div><div class="point green" style="top:25%; left:85%"></div></div></transition>
+
+          <div class="result-section">
+            <h3 class="section-head">Step 2. Result</h3>
+            <div v-if="inferenceResult" class="result-box">
+              <div class="detection-badge">{{ inferenceResult.label }}</div>
+              <div class="conf-meter">
+                <div class="meter-label"><span>Confidence</span><span class="score-text">{{ inferenceResult.confidence }}%</span></div>
+                <div class="meter-bg"><div class="meter-fill" :style="{ width: inferenceResult.confidence + '%' }"></div></div>
+              </div>
+              <div class="log-console">
+                <div>> Preprocessing... OK</div>
+                <div>> Inference time: <span style="color:#facc15">14ms</span></div>
+                <div style="color:#4ade80; margin-top:5px;">> Detected: {{ inferenceResult.label }}</div>
+              </div>
+            </div>
+            <div v-else class="empty-state">
+              <p>Waiting for image...</p>
+            </div>
           </div>
         </div>
       </div>
+
     </main>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, watch, nextTick } from 'vue';
 import { useRoute } from 'vue-router';
 import axios from 'axios';
+import Plotly from 'plotly.js-dist-min';
 
 const route = useRoute();
 const tab = ref('analysis');
@@ -117,6 +150,70 @@ onMounted(async () => {
     console.log("Using demo data");
   }
 });
+
+watch(tab, async () => {
+  if (tab.value === 'cluster') {
+    await nextTick();
+    drawClusterPlot();
+  }
+});
+
+const drawClusterPlot = () => {
+  // demo용 클러스터 데이터
+  const trace1 = {
+    x: [1, 2, 3, 5, 6, 2, 4, 1, 6],
+    y: [2, 3, 1, 5, 4, 2, 5, 2, 5],
+    mode: 'markers',
+    type: 'scatter',
+    marker: { size: 12, color: ['#ef4444', '#3b82f6', '#22c55e', '#ef4444', '#3b82f6', '#22c55e', '#ef4444', '#3b82f6', '#22c55e'] },
+    text: ['Class A', 'Class B', 'Class C', 'Class A', 'Class B', 'Class C', 'Class A', 'Class B', 'Class C'],
+    hoverinfo: 'text'
+  };
+
+  const layout = {
+    title: { text: 'Feature Space Distribution', font: { color: 'white' } },
+    paper_bgcolor: 'rgba(0,0,0,0)',
+    plot_bgcolor: 'rgba(0,0,0,0)',
+    xaxis: { showgrid: false, zeroline: false, showticklabels: false },
+    yaxis: { showgrid: false, zeroline: false, showticklabels: false },
+    margin: { t: 40, l: 0, r: 0, b: 0 }
+  };
+
+  const config = { responsive: true, displayModeBar: false };
+  Plotly.newPlot('cluster-chart-div', [trace1], layout, config);
+};
+
+// 인퍼런스 로직
+const previewUrl = ref(null);
+const selectedFile = ref(null);
+const inferenceResult = ref(null);
+const isLoading = ref(false);
+
+const handleFileSelect = (e) => processFile(e.target.files[0]);
+const handleDrop = (e) => processFile(e.dataTransfer.files[0]);
+const processFile = (file) => {
+  if (!file) return;
+  selectedFile.value = file;
+  previewUrl.value = URL.createObjectURL(file);
+  inferenceResult.value = null;
+};
+
+const runInference = async () => {
+  if (!selectedFile.value) return;
+  isLoading.value = true;
+  
+  // [가짜 로직] 1초 뒤 결과 표시 (백엔드 연동 전 데모), 실제론 아래 주석 처리된 코드 사용
+  setTimeout(() => {
+    inferenceResult.value = { label: 'Construction Hat', confidence: 98.2 };
+    isLoading.value = false;
+  }, 1000);
+  
+  // [진짜 로직 예시]
+  // const formData = new FormData();
+  // formData.append('file', selectedFile.value);
+  // const res = await axios.post('http://127.0.0.1:8000/predict', formData);
+  // inferenceResult.value = res.data;
+};
 </script>
 
 <style scoped>
